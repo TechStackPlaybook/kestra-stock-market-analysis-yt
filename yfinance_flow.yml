@@ -1,0 +1,29 @@
+id: yfinance_flow
+namespace: tech-stack-playbook
+
+tasks:
+  - id: stock_data
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process  # Explicitly use Process runner
+    beforeCommands:
+      - python -m venv /tmp/venv  # Create virtual environment
+      - . /tmp/venv/bin/activate  # Activate it
+      - pip install yfinance kestra
+    script: |
+      from kestra import Kestra
+      import yfinance as yf
+      
+      try:
+          # Get stock data
+          aapl = yf.Ticker("AAPL")
+          hist = aapl.history(period="1mo")
+          
+          # Convert to records and send to outputs
+          data_dict = hist.to_dict('records')
+          Kestra.outputs({'stock_data': data_dict})
+          print("Successfully fetched AAPL stock data")
+          
+      except Exception as e:
+          print(f"Error occurred: {str(e)}")
+          raise e
