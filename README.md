@@ -1,3 +1,8 @@
+![Kestra - Stock Market Analysis](https://github.com/user-attachments/assets/dfff2156-009c-43b7-8deb-7b5a62eae134)
+Watch the full YouTube Tutorial here: https://youtu.be/3q8FbiR-t8g
+
+<br/>
+
 # Setting Up Kestra: A Step-by-Step Guide
 
 ## What We're Going to Do
@@ -59,6 +64,7 @@ Once everything is running, you can:
 1. Click **"Create Flow"** to make your first workflow.
 2. Explore the interface.
 3. Try creating some basic automations.
+4. Watch the full YouTube Tutorial here: https://youtu.be/3q8FbiR-t8g
 
 ### To stop Kestra when you're done:
 
