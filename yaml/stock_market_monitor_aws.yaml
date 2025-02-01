@@ -1,0 +1,161 @@
+id: simple_market_monitor_aws
+namespace: tech-stack-playbook
+
+variables:
+  stocks: "AAPL,GOOGL,MSFT,AMZN,NVDA"  # Our tech stock basket
+  aws_access_key_id: ""
+  aws_secret_access_key_id: ""
+  aws_region: ""
+  s3_bucket: ""
+
+tasks:
+  - id: market_monitor
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process  # Explicitly use Process runner
+    beforeCommands:
+      - python -m venv /tmp/venv  # Create virtual environment
+      - . /tmp/venv/bin/activate  # Activate it
+      - pip install yfinance pandas kestra
+    outputFiles:
+      - "current_market.json"
+      - "market_history.json"
+    script: |
+      import yfinance as yf
+      import pandas as pd
+      import json
+      from datetime import datetime
+      from kestra import Kestra
+      
+      def fetch_stock_data():
+          symbols = "{{ vars.stocks }}".split(",")
+          data = []
+          
+          for symbol in symbols:
+              try:
+                  ticker = yf.Ticker(symbol)
+                  hist = ticker.history(period="1d", interval="5m")
+                  if not hist.empty:
+                      current_data = {
+                          "symbol": symbol,
+                          "timestamp": datetime.now().isoformat(),
+                          "price": float(hist['Close'].iloc[-1]),
+                          "volume": int(hist['Volume'].iloc[-1]),
+                          "change": float(hist['Close'].pct_change().iloc[-1] * 100),
+                          "dayHigh": float(hist['High'].max()),
+                          "dayLow": float(hist['Low'].min())
+                      }
+                      data.append(current_data)
+              except Exception as e:
+                  print(f"Error fetching {symbol}: {str(e)}")
+          
+          # Save current snapshot
+          with open('current_market.json', 'w') as f:
+              json.dump(data, f)
+          
+          # Append to historical data
+          try:
+              with open('market_history.json', 'r') as f:
+                  history = json.load(f)
+          except FileNotFoundError:
+              history = []
+          
+          history.extend(data)
+          if len(history) > 288:
+              history = history[-288:]
+          
+          with open('market_history.json', 'w') as f:
+              json.dump(history, f)
+          
+          return len(data), data
+
+      num_stocks, current_data = fetch_stock_data()
+      if num_stocks == 0:
+          raise Exception("Failed to fetch any stock data")
+      
+      # Pass data to next task using Kestra outputs
+      Kestra.outputs({"current_data": current_data})
+
+  - id: generate_alerts
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process  # Explicitly use Process runner
+    runIf: "#{execution.tasks['market_monitor'].status} == 'SUCCESS'"
+    beforeCommands:
+      - python -m venv /tmp/venv  # Create virtual environment
+      - . /tmp/venv/bin/activate  # Activate it
+    outputFiles:
+      - "alerts.json"
+    script: |
+      import json
+      from datetime import datetime
+      from kestra import Kestra
+      
+      # Get data from previous task - note the quotes around the template
+      current_data = {{ outputs.market_monitor.vars.current_data }}
+      
+      def check_alerts():
+          # Parse the JSON string into Python object
+          alerts = []
+          for stock in current_data:
+              if abs(stock['change']) > 1.5:
+                  alerts.append({
+                      "level": "warning",
+                      "symbol": stock['symbol'],
+                      "message": f"Price movement of {stock['change']:.2f}%",
+                      "timestamp": datetime.now().isoformat()
+                  })
+          
+          # Save alerts
+          try:
+              with open('alerts.json', 'r') as f:
+                  existing_alerts = json.load(f)
+          except FileNotFoundError:
+              existing_alerts = []
+          
+          existing_alerts.extend(alerts)
+          if len(existing_alerts) > 50:
+              existing_alerts = existing_alerts[-50:]
+          
+          with open('alerts.json', 'w') as f:
+              json.dump(existing_alerts, f)
+          
+          return len(alerts)
+
+      num_alerts = check_alerts()
+      print(f"Generated {num_alerts} new alerts")
+
+  - id: upload_current_market
+    type: io.kestra.plugin.aws.s3.Upload
+    runIf: "#{execution.tasks['market_monitor'].status} == 'SUCCESS'"
+    from: "{{ outputs.market_monitor.outputFiles['current_market.json'] }}"
+    bucket: "{{ vars.s3_bucket }}"
+    key: "market_data/current/{{ execution.startDate | date('yyyy/MM/dd/HH/mm') }}/current_market.json"
+    accessKeyId: "{{ vars.aws_access_key_id }}"
+    secretKeyId: "{{ vars.aws_secret_access_key_id }}"
+    region: "{{ vars.aws_region }}"
+
+  - id: upload_market_history
+    type: io.kestra.plugin.aws.s3.Upload
+    runIf: "#{execution.tasks['market_monitor'].status} == 'SUCCESS'"
+    from: "{{ outputs.market_monitor.outputFiles['market_history.json'] }}"
+    bucket: "{{ vars.s3_bucket }}"
+    key: "market_data/historical/{{ execution.startDate | date('yyyy/MM/dd/HH/mm') }}/market_history.json"
+    accessKeyId: "{{ vars.aws_access_key_id }}"
+    secretKeyId: "{{ vars.aws_secret_access_key_id }}"
+    region: "{{ vars.aws_region }}"
+
+  - id: upload_alerts
+    type: io.kestra.plugin.aws.s3.Upload
+    runIf: "#{execution.tasks['generate_alerts'].status} == 'SUCCESS'"
+    from: "{{ outputs.generate_alerts.outputFiles['alerts.json'] }}"
+    bucket: "{{ vars.s3_bucket }}"
+    key: "alerts/{{ execution.startDate | date('yyyy/MM/dd/HH/mm') }}/alerts.json"
+    accessKeyId: "{{ vars.aws_access_key_id }}"
+    secretKeyId: "{{ vars.aws_secret_access_key_id }}"
+    region: "{{ vars.aws_region }}"
+    
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 * * * *"  # Run every 5 minutes
