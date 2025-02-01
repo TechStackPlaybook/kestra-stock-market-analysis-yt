@@ -1,0 +1,30 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "KestraS3BucketCreation",
+            "Effect": "Allow",
+            "Action": [
+                "s3:CreateBucket",
+                "s3:PutBucketPolicy",
+                "s3:PutBucketTagging"
+            ],
+            "Resource": [
+                "arn:aws:s3:::YOUR_S3_BUCKET_NAME_HERE"
+            ]
+        },
+        {
+            "Sid": "KestraS3Operations",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:ListBucket",
+                "s3:DeleteObject"
+            ],
+            "Resource": [
+                "arn:aws:s3:::YOUR_S3_BUCKET_NAME_HERE/*"
+            ]
+        }
+    ]
+}
